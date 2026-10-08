@@ -6,7 +6,6 @@ from flask import Flask, render_template, request, redirect, session, url_for
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_ticketing_tool'
 
-# Writable database path for Vercel serverless environment
 DB_PATH = '/tmp/ticketing.db' if os.path.exists('/tmp') else 'ticketing.db'
 
 def get_db():
@@ -48,33 +47,34 @@ def init_db():
         )
     ''')
 
-    # Seed all demo users matching the UI text so none of them fail
-    cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] == 0:
-        # Admins
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN')")
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN')")
-        
-        # Employees
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('EMP-2001', 'Amulya', 'amulya@helpdesk.com', 'emp123', 'EMPLOYEE')")
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('EMP-2002', 'Taruni', 'taruni@helpdesk.com', 'emp123', 'EMPLOYEE')")
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('EMP-2003', 'Godha', 'godha@helpdesk.com', 'emp123', 'EMPLOYEE')")
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('EMP-2004', 'Amitha', 'amitha@helpdesk.com', 'emp123', 'EMPLOYEE')")
-        
-        # Clients (matching UI demo credentials)
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('CLT-1001', 'Rahul Client', 'client1@gmail.com', 'client123', 'CLIENT')")
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('CLT-1002', 'Client Two', 'client2@gmail.com', 'client2', 'CLIENT')")
-        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('CLT-1003', 'Client Three', 'client3@gmail.com', 'client3', 'CLIENT')")
-        
-        # Sample Ticket
-        cursor.execute("INSERT OR IGNORE INTO tickets (title, description, category, priority, status, created_by, assigned_to) VALUES ('VPN Access Request', 'Need VPN configuration for remote office access.', 'IT Support', 'HIGH', 'OPEN', 7, 3)")
+    # Always ensure demo users exist so they never disappear on serverless resets
+    demo_users = [
+        ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN'),
+        ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN'),
+        ('EMP-2001', 'Amulya', 'amulya@helpdesk.com', 'emp123', 'EMPLOYEE'),
+        ('EMP-2002', 'Taruni', 'taruni@helpdesk.com', 'emp123', 'EMPLOYEE'),
+        ('EMP-2003', 'Godha', 'godha@helpdesk.com', 'emp123', 'EMPLOYEE'),
+        ('EMP-2004', 'Amitha', 'amitha@helpdesk.com', 'emp123', 'EMPLOYEE'),
+        ('CLT-1001', 'Rahul Client', 'client1@gmail.com', 'client123', 'CLIENT'),
+        ('CLT-1002', 'Client Two', 'client2@gmail.com', 'client2@', 'CLIENT'),
+        ('CLT-1003', 'Client Three', 'client3@gmail.com', 'client3@', 'CLIENT')
+    ]
+
+    for user in demo_users:
+        cursor.execute('''
+            INSERT OR IGNORE INTO users (custom_id, username, email, password, role)
+            VALUES (?, ?, ?, ?, ?)
+        ''', user)
 
     conn.commit()
     conn.close()
 
+@app.before_request
+def before_request_func():
+    init_db()
+
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    init_db()
     error = None
     if request.method == 'POST':
         email = request.form.get('email', '').strip()
@@ -102,7 +102,6 @@ def login():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    init_db()
     error = None
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
@@ -134,7 +133,6 @@ def dashboard():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
-    init_db()
     conn = get_db()
     try:
         cursor = conn.cursor()
@@ -178,7 +176,6 @@ def create_ticket():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     
-    init_db()
     error = None
     if request.method == 'POST':
         title = request.form.get('title', '').strip()
@@ -208,7 +205,6 @@ def update_ticket(ticket_id):
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    init_db()
     status = request.form.get('status')
     assigned_to = request.form.get('assigned_to')
 
@@ -232,3 +228,6 @@ def logout():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+    
