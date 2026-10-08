@@ -5,7 +5,6 @@ from flask import Flask, render_template, request, redirect, session, url_for
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_ticketing_tool'
 
-# Writable database path for Vercel serverless environment
 DB_PATH = '/tmp/ticketing.db' if os.path.exists('/tmp') else 'ticketing.db'
 
 def init_db():
@@ -38,25 +37,30 @@ def init_db():
         )
     ''')
 
+    # Seed initial demo users if table is freshly created
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN')")
-        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN')")
-        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('EMP-2001', 'Amulya', 'amulya@helpdesk.com', 'emp123', 'EMPLOYEE')")
-        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('EMP-2002', 'Taruni', 'taruni@helpdesk.com', 'emp123', 'EMPLOYEE')")
-        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('EMP-2003', 'Godha', 'godha@helpdesk.com', 'emp123', 'EMPLOYEE')")
-        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('EMP-2004', 'Amitha', 'amitha@helpdesk.com', 'emp123', 'EMPLOYEE')")
-        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('CLT-1001', 'Rahul Client', 'client1@gmail.com', 'client123', 'CLIENT')")
-        cursor.execute("INSERT INTO tickets (title, description, category, priority, status, created_by, assigned_to) VALUES ('VPN Access Request', 'Need VPN configuration for remote office access.', 'IT Support', 'HIGH', 'OPEN', 7, 3)")
+        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN')")
+        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN')")
+        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('EMP-2001', 'Amulya', 'amulya@helpdesk.com', 'emp123', 'EMPLOYEE')")
+        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('EMP-2002', 'Taruni', 'taruni@helpdesk.com', 'emp123', 'EMPLOYEE')")
+        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('EMP-2003', 'Godha', 'godha@helpdesk.com', 'emp123', 'EMPLOYEE')")
+        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('EMP-2004', 'Amitha', 'amitha@helpdesk.com', 'emp123', 'EMPLOYEE')")
+        cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('CLT-1001', 'Rahul Client', 'client1@gmail.com', 'client123', 'CLIENT')")
+        cursor.execute("INSERT OR IGNORE INTO tickets (title, description, category, priority, status, created_by, assigned_to) VALUES ('VPN Access Request', 'Need VPN configuration for remote office access.', 'IT Support', 'HIGH', 'OPEN', 7, 3)")
 
     conn.commit()
     conn.close()
 
 def get_db():
-    init_db()
+    init_db()  # Guarantees tables exist on EVERY serverless invocation
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+@app.before_request
+def ensure_db_ready():
+    init_db()
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
@@ -84,39 +88,34 @@ def login():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    if 'user_id' in session:
-        return redirect(url_for('dashboard'))
-
-    error = None
     if request.method == 'POST':
-        username = request.form['username'].strip()
-        email = request.form['email'].strip()
-        password = request.form['password'].strip()
-        role = request.form['role']
+        username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '').strip()
+        role = request.form.get('role', 'CLIENT').strip()
 
         conn = get_db()
-        existing_user = conn.execute('SELECT * FROM users WHERE email = ?', (email,)).fetchone()
-        
-        if existing_user:
-            error = 'Email address already registered!'
-            conn.close()
-        else:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO users (username, email, password, role)
-                VALUES (?, ?, ?, ?)
-            ''', (username, email, password, role))
+        cursor = conn.cursor()
+
+        # Generate custom_id safely
+        prefix = 'CLT' if role == 'CLIENT' else ('EMP' if role == 'EMPLOYEE' else 'ADM')
+        cursor.execute("SELECT COUNT(*) FROM users WHERE role = ?", (role,))
+        count = cursor.fetchone()[0] + 1
+        custom_id = f"{prefix}-{1000 + count}"
+
+        try:
+            cursor.execute(
+                "INSERT INTO users (custom_id, username, email, password, role) VALUES (?, ?, ?, ?, ?)",
+                (custom_id, username, email, password, role)
+            )
             conn.commit()
-            
-            new_user_id = cursor.lastrowid
-            session['user_id'] = new_user_id
-            session['username'] = username
-            session['role'] = role
             conn.close()
+            return redirect(url_for('login'))
+        except Exception as e:
+            conn.close()
+            return render_template('register.html', error=f"Registration failed: {str(e)}")
 
-            return redirect(url_for('dashboard'))
-
-    return render_template('register.html', error=error)
+    return render_template('register.html')
 
 @app.route('/dashboard')
 def dashboard():
