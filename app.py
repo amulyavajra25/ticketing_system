@@ -47,7 +47,7 @@ def init_db():
         )
     ''')
 
-    # Always ensure demo users exist so they never disappear on serverless resets
+    # Force update or insert demo users so passwords are ALWAYS correct
     demo_users = [
         ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN'),
         ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN'),
@@ -56,15 +56,19 @@ def init_db():
         ('EMP-2003', 'Godha', 'godha@helpdesk.com', 'emp123', 'EMPLOYEE'),
         ('EMP-2004', 'Amitha', 'amitha@helpdesk.com', 'emp123', 'EMPLOYEE'),
         ('CLT-1001', 'Rahul Client', 'client1@gmail.com', 'client123', 'CLIENT'),
-        ('CLT-1002', 'Client Two', 'client2@gmail.com', 'client2@', 'CLIENT'),
-        ('CLT-1003', 'Client Three', 'client3@gmail.com', 'client3@', 'CLIENT')
+        ('CLT-1002', 'Client Two', 'client2@gmail.com', 'client123', 'CLIENT'),
+        ('CLT-1003', 'Client Three', 'client3@gmail.com', 'client123', 'CLIENT')
     ]
 
     for user in demo_users:
-        cursor.execute('''
-            INSERT OR IGNORE INTO users (custom_id, username, email, password, role)
-            VALUES (?, ?, ?, ?, ?)
-        ''', user)
+        # Check if email exists
+        cursor.execute("SELECT user_id FROM users WHERE email = ?", (user[2],))
+        existing = cursor.fetchone()
+        if existing:
+            # Force update password & role to match demo specs
+            cursor.execute("UPDATE users SET password = ?, role = ?, username = ? WHERE email = ?", (user[3], user[4], user[1], user[2]))
+        else:
+            cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES (?, ?, ?, ?, ?)", user)
 
     conn.commit()
     conn.close()
@@ -228,6 +232,3 @@ def logout():
 
 if __name__ == '__main__':
     app.run(debug=True)
-
-
-    
