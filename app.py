@@ -41,13 +41,11 @@ def init_db():
             priority TEXT CHECK(priority IN ('LOW', 'MEDIUM', 'HIGH', 'URGENT')) NOT NULL,
             status TEXT CHECK(status IN ('OPEN', 'WORK_IN_PROGRESS', 'RESOLVED', 'CLOSED')) DEFAULT 'OPEN',
             created_by INTEGER NOT NULL,
-            assigned_to INTEGER,
-            FOREIGN KEY (created_by) REFERENCES users(user_id),
-            FOREIGN KEY (assigned_to) REFERENCES users(user_id)
+            assigned_to INTEGER
         )
     ''')
 
-    # Force update or insert demo users so passwords are ALWAYS correct
+    # Force update or insert demo users
     demo_users = [
         ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN'),
         ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN'),
@@ -61,11 +59,9 @@ def init_db():
     ]
 
     for user in demo_users:
-        # Check if email exists
         cursor.execute("SELECT user_id FROM users WHERE email = ?", (user[2],))
         existing = cursor.fetchone()
         if existing:
-            # Force update password & role to match demo specs
             cursor.execute("UPDATE users SET password = ?, role = ?, username = ? WHERE email = ?", (user[3], user[4], user[1], user[2]))
         else:
             cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES (?, ?, ?, ?, ?)", user)
@@ -145,14 +141,14 @@ def dashboard():
 
         if role == 'ADMIN':
             cursor.execute('''
-                SELECT t.*, u.username as creator_name, e.username as assignee_name 
+                SELECT t.*, u.username as creator_name, COALESCE(e.username, 'Unassigned') as assignee_name 
                 FROM tickets t 
                 JOIN users u ON t.created_by = u.user_id 
                 LEFT JOIN users e ON t.assigned_to = e.user_id
             ''')
         elif role == 'EMPLOYEE':
             cursor.execute('''
-                SELECT t.*, u.username as creator_name, e.username as assignee_name 
+                SELECT t.*, u.username as creator_name, COALESCE(e.username, 'Unassigned') as assignee_name 
                 FROM tickets t 
                 JOIN users u ON t.created_by = u.user_id 
                 LEFT JOIN users e ON t.assigned_to = e.user_id 
@@ -160,7 +156,7 @@ def dashboard():
             ''', (user_id,))
         else: # CLIENT
             cursor.execute('''
-                SELECT t.*, u.username as creator_name, e.username as assignee_name 
+                SELECT t.*, u.username as creator_name, COALESCE(e.username, 'Unassigned') as assignee_name 
                 FROM tickets t 
                 JOIN users u ON t.created_by = u.user_id 
                 LEFT JOIN users e ON t.assigned_to = e.user_id 
