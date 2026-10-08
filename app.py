@@ -1,11 +1,60 @@
-from flask import Flask, render_template, request, redirect, session, url_for
+import os
 import sqlite3
+from flask import Flask, render_template, request, redirect, session, url_for
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_ticketing_tool'
 
+# Writable database path for Vercel serverless environment
+DB_PATH = '/tmp/ticketing.db' if os.path.exists('/tmp') else 'ticketing.db'
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            custom_id TEXT UNIQUE NOT NULL,
+            username TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT CHECK(role IN ('ADMIN', 'EMPLOYEE', 'CLIENT')) NOT NULL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tickets (
+            ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            priority TEXT CHECK(priority IN ('LOW', 'MEDIUM', 'HIGH', 'URGENT')) NOT NULL,
+            status TEXT CHECK(status IN ('OPEN', 'WORK_IN_PROGRESS', 'RESOLVED', 'CLOSED')) DEFAULT 'OPEN',
+            created_by INTEGER NOT NULL,
+            assigned_to INTEGER,
+            FOREIGN KEY (created_by) REFERENCES users(user_id),
+            FOREIGN KEY (assigned_to) REFERENCES users(user_id)
+        )
+    ''')
+
+    cursor.execute("SELECT COUNT(*) FROM users")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN')")
+        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN')")
+        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('EMP-2001', 'Amulya', 'amulya@helpdesk.com', 'emp123', 'EMPLOYEE')")
+        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('EMP-2002', 'Taruni', 'taruni@helpdesk.com', 'emp123', 'EMPLOYEE')")
+        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('EMP-2003', 'Godha', 'godha@helpdesk.com', 'emp123', 'EMPLOYEE')")
+        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('EMP-2004', 'Amitha', 'amitha@helpdesk.com', 'emp123', 'EMPLOYEE')")
+        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES ('CLT-1001', 'Rahul Client', 'client1@gmail.com', 'client123', 'CLIENT')")
+        cursor.execute("INSERT INTO tickets (title, description, category, priority, status, created_by, assigned_to) VALUES ('VPN Access Request', 'Need VPN configuration for remote office access.', 'IT Support', 'HIGH', 'OPEN', 7, 3)")
+
+    conn.commit()
+    conn.close()
+
 def get_db():
-    conn = sqlite3.connect('ticketing.db')
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
