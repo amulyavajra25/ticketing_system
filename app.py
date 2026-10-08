@@ -45,7 +45,6 @@ def init_db():
         )
     ''')
 
-    # Force update or insert demo users safely
     demo_users = [
         ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN'),
         ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN'),
@@ -86,7 +85,6 @@ def login():
             cursor.execute('SELECT * FROM users WHERE email = ? AND password = ?', (email, password))
             user = cursor.fetchone()
             if user:
-                # Store email instead of ID to prevent serverless instance ID mismatch
                 session['email'] = user['email']
                 session['username'] = user['username']
                 session['role'] = user['role']
@@ -140,7 +138,6 @@ def dashboard():
         role = session.get('role')
         email = session.get('email')
 
-        # Fetch current user's DB ID dynamically
         cursor.execute("SELECT user_id FROM users WHERE email = ?", (email,))
         current_user = cursor.fetchone()
         if not current_user:
@@ -186,15 +183,14 @@ def create_ticket():
         return redirect(url_for('login'))
     
     error = None
-    conn = get_db()
-    try:
-        if request.method == 'POST':
-            title = request.form.get('title', '').strip()
-            category = request.form.get('category', '').strip()
-            priority = request.form.get('priority', 'MEDIUM').strip()
-            description = request.form.get('description', '').strip()
-            
-            # Dynamically fetch user_id based on session email to prevent ID mismatches
+    if request.method == 'POST':
+        title = request.form.get('title', '').strip()
+        category = request.form.get('category', '').strip()
+        priority = request.form.get('priority', 'MEDIUM').strip()
+        description = request.form.get('description', '').strip()
+        
+        conn = get_db()
+        try:
             cursor = conn.cursor()
             cursor.execute("SELECT user_id FROM users WHERE email = ?", (session['email'],))
             user_row = cursor.fetchone()
@@ -210,10 +206,10 @@ def create_ticket():
             ''', (title, description, category, priority, created_by))
             conn.commit()
             return redirect(url_for('dashboard'))
-    except Exception as e:
-        error = f"Ticket creation failed: {str(e)}"
-    finally:
-        conn.close()
+        except Exception as e:
+            error = f"Ticket creation failed: {str(e)}"
+        finally:
+            conn.close()
 
     return render_template('create_ticket.html', error=error)
 
