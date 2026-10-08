@@ -226,8 +226,8 @@ def update_ticket(ticket_id):
         cursor = conn.cursor()
         if status:
             cursor.execute("UPDATE tickets SET status = ? WHERE ticket_id = ?", (status, ticket_id))
-        if assigned_to is not None:
-            cursor.execute("UPDATE tickets SET assigned_to = ? WHERE ticket_id = ?", (assigned_to if assigned_to else None, ticket_id))
+        if assigned_to:
+            cursor.execute("UPDATE tickets SET assigned_to = ? WHERE ticket_id = ?", (assigned_to, ticket_id))
         conn.commit()
     finally:
         conn.close()
