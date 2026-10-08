@@ -45,7 +45,7 @@ def init_db():
         )
     ''')
 
-    # Force update or insert demo users
+    # Force update or insert demo users safely
     demo_users = [
         ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN'),
         ('ADM-1002', 'Santhosh Admin', 'santhosh@helpdesk.com', 'admin123', 'ADMIN'),
@@ -86,7 +86,8 @@ def login():
             cursor.execute('SELECT * FROM users WHERE email = ? AND password = ?', (email, password))
             user = cursor.fetchone()
             if user:
-                session['user_id'] = user['user_id']
+                # Store email instead of ID to prevent serverless instance ID mismatch
+                session['email'] = user['email']
                 session['username'] = user['username']
                 session['role'] = user['role']
                 session['custom_id'] = user['custom_id']
@@ -130,14 +131,22 @@ def register():
 
 @app.route('/dashboard')
 def dashboard():
-    if 'user_id' not in session:
+    if 'email' not in session:
         return redirect(url_for('login'))
     
     conn = get_db()
     try:
         cursor = conn.cursor()
         role = session.get('role')
-        user_id = session.get('user_id')
+        email = session.get('email')
+
+        # Fetch current user's DB ID dynamically
+        cursor.execute("SELECT user_id FROM users WHERE email = ?", (email,))
+        current_user = cursor.fetchone()
+        if not current_user:
+            session.clear()
+            return redirect(url_for('login'))
+        user_id = current_user['user_id']
 
         if role == 'ADMIN':
             cursor.execute('''
@@ -173,36 +182,44 @@ def dashboard():
 
 @app.route('/create_ticket', methods=['GET', 'POST'])
 def create_ticket():
-    if 'user_id' not in session:
+    if 'email' not in session:
         return redirect(url_for('login'))
     
     error = None
-    if request.method == 'POST':
-        title = request.form.get('title', '').strip()
-        category = request.form.get('category', '').strip()
-        priority = request.form.get('priority', 'MEDIUM').strip()
-        description = request.form.get('description', '').strip()
-        created_by = session['user_id']
-
-        conn = get_db()
-        try:
+    conn = get_db()
+    try:
+        if request.method == 'POST':
+            title = request.form.get('title', '').strip()
+            category = request.form.get('category', '').strip()
+            priority = request.form.get('priority', 'MEDIUM').strip()
+            description = request.form.get('description', '').strip()
+            
+            # Dynamically fetch user_id based on session email to prevent ID mismatches
             cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM users WHERE email = ?", (session['email'],))
+            user_row = cursor.fetchone()
+            
+            if not user_row:
+                return redirect(url_for('login'))
+            
+            created_by = user_row['user_id']
+
             cursor.execute('''
                 INSERT INTO tickets (title, description, category, priority, status, created_by)
                 VALUES (?, ?, ?, ?, 'OPEN', ?)
             ''', (title, description, category, priority, created_by))
             conn.commit()
             return redirect(url_for('dashboard'))
-        except Exception as e:
-            error = f"Ticket creation failed: {str(e)}"
-        finally:
-            conn.close()
+    except Exception as e:
+        error = f"Ticket creation failed: {str(e)}"
+    finally:
+        conn.close()
 
     return render_template('create_ticket.html', error=error)
 
 @app.route('/update_ticket/<int:ticket_id>', methods=['POST'])
 def update_ticket(ticket_id):
-    if 'user_id' not in session:
+    if 'email' not in session:
         return redirect(url_for('login'))
 
     status = request.form.get('status')
