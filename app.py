@@ -1,14 +1,26 @@
 import os
 import sqlite3
+import uuid
 from flask import Flask, render_template, request, redirect, session, url_for
 
 app = Flask(__name__)
 app.secret_key = 'super_secret_key_ticketing_tool'
 
+# Writable database path for Vercel serverless environment
 DB_PATH = '/tmp/ticketing.db' if os.path.exists('/tmp') else 'ticketing.db'
 
+def get_db():
+    # timeout=20 prevents 'database is locked' errors by waiting for locks to clear
+    conn = sqlite3.connect(DB_PATH, timeout=20.0)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+    except sqlite3.OperationalError:
+        pass
+    return conn
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db()
     cursor = conn.cursor()
 
     cursor.execute('''
@@ -37,7 +49,7 @@ def init_db():
         )
     ''')
 
-    # Seed initial demo users if table is freshly created
+    # Seed initial demo users if table is empty
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT OR IGNORE INTO users (custom_id, username, email, password, role) VALUES ('ADM-1001', 'Mani Admin', 'mani@helpdesk.com', 'admin123', 'ADMIN')")
@@ -52,162 +64,156 @@ def init_db():
     conn.commit()
     conn.close()
 
-def get_db():
-    init_db()  # Guarantees tables exist on EVERY serverless invocation
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-@app.before_request
-def ensure_db_ready():
-    init_db()
-
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    if 'user_id' in session:
-        return redirect(url_for('dashboard'))
-
+    init_db()
     error = None
     if request.method == 'POST':
-        email = request.form['email'].strip()
-        password = request.form['password'].strip()
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '').strip()
 
         conn = get_db()
-        user = conn.execute('SELECT * FROM users WHERE email = ? AND password = ?', (email, password)).fetchone()
-        conn.close()
-
-        if user:
-            session['user_id'] = user['user_id']
-            session['username'] = user['username']
-            session['role'] = user['role']
-            return redirect(url_for('dashboard'))
-        else:
-            error = 'Invalid email or password!'
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE email = ? AND password = ?', (email, password))
+            user = cursor.fetchone()
+            if user:
+                session['user_id'] = user['user_id']
+                session['username'] = user['username']
+                session['role'] = user['role']
+                session['custom_id'] = user['custom_id']
+                return redirect(url_for('dashboard'))
+            else:
+                error = 'Invalid email or password.'
+        except Exception as e:
+            error = f'Login error: {str(e)}'
+        finally:
+            conn.close()
 
     return render_template('login.html', error=error)
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    init_db()
+    error = None
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         email = request.form.get('email', '').strip()
         password = request.form.get('password', '').strip()
         role = request.form.get('role', 'CLIENT').strip()
 
-        conn = get_db()
-        cursor = conn.cursor()
-
-        # Generate custom_id safely
         prefix = 'CLT' if role == 'CLIENT' else ('EMP' if role == 'EMPLOYEE' else 'ADM')
-        cursor.execute("SELECT COUNT(*) FROM users WHERE role = ?", (role,))
-        count = cursor.fetchone()[0] + 1
-        custom_id = f"{prefix}-{1000 + count}"
+        custom_id = f"{prefix}-{uuid.uuid4().hex[:4].upper()}"
 
+        conn = get_db()
         try:
+            cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO users (custom_id, username, email, password, role) VALUES (?, ?, ?, ?, ?)",
                 (custom_id, username, email, password, role)
             )
             conn.commit()
-            conn.close()
             return redirect(url_for('login'))
         except Exception as e:
+            error = f"Registration failed: {str(e)}"
+        finally:
             conn.close()
-            return render_template('register.html', error=f"Registration failed: {str(e)}")
 
-    return render_template('register.html')
+    return render_template('register.html', error=error)
 
 @app.route('/dashboard')
 def dashboard():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-
-    user_id = session['user_id']
-    role = session['role']
+    
+    init_db()
     conn = get_db()
+    try:
+        cursor = conn.cursor()
+        role = session.get('role')
+        user_id = session.get('user_id')
 
-    # Role-Based Data Isolation
-    if role == 'ADMIN':
-        query = '''
-            SELECT t.*, u1.username as client_name, u2.username as emp_name 
-            FROM tickets t 
-            JOIN users u1 ON t.created_by = u1.user_id 
-            LEFT JOIN users u2 ON t.assigned_to = u2.user_id
-            ORDER BY t.ticket_id DESC
-        '''
-        tickets = conn.execute(query).fetchall()
-    elif role == 'EMPLOYEE':
-        query = '''
-            SELECT t.*, u1.username as client_name, u2.username as emp_name 
-            FROM tickets t 
-            JOIN users u1 ON t.created_by = u1.user_id 
-            LEFT JOIN users u2 ON t.assigned_to = u2.user_id
-            WHERE t.assigned_to = ? OR t.assigned_to IS NULL
-            ORDER BY t.ticket_id DESC
-        '''
-        tickets = conn.execute(query, (user_id,)).fetchall()
-    else:
-        query = '''
-            SELECT t.*, u1.username as client_name, u2.username as emp_name 
-            FROM tickets t 
-            JOIN users u1 ON t.created_by = u1.user_id 
-            LEFT JOIN users u2 ON t.assigned_to = u2.user_id
-            WHERE t.created_by = ?
-            ORDER BY t.ticket_id DESC
-        '''
-        tickets = conn.execute(query, (user_id,)).fetchall()
-
-    employees = conn.execute("SELECT * FROM users WHERE role = 'EMPLOYEE'").fetchall()
-    conn.close()
+        if role == 'ADMIN':
+            cursor.execute('''
+                SELECT t.*, u.username as creator_name, e.username as assignee_name 
+                FROM tickets t 
+                JOIN users u ON t.created_by = u.user_id 
+                LEFT JOIN users e ON t.assigned_to = e.user_id
+            ''')
+        elif role == 'EMPLOYEE':
+            cursor.execute('''
+                SELECT t.*, u.username as creator_name, e.username as assignee_name 
+                FROM tickets t 
+                JOIN users u ON t.created_by = u.user_id 
+                LEFT JOIN users e ON t.assigned_to = e.user_id 
+                WHERE t.assigned_to = ? OR t.assigned_to IS NULL
+            ''', (user_id,))
+        else: # CLIENT
+            cursor.execute('''
+                SELECT t.*, u.username as creator_name, e.username as assignee_name 
+                FROM tickets t 
+                JOIN users u ON t.created_by = u.user_id 
+                LEFT JOIN users e ON t.assigned_to = e.user_id 
+                WHERE t.created_by = ?
+            ''', (user_id,))
+        
+        tickets = cursor.fetchall()
+        cursor.execute("SELECT * FROM users WHERE role = 'EMPLOYEE'")
+        employees = cursor.fetchall()
+    finally:
+        conn.close()
 
     return render_template('dashboard.html', tickets=tickets, employees=employees)
 
-@app.route('/create_ticket', methods=['POST'])
+@app.route('/create_ticket', methods=['GET', 'POST'])
 def create_ticket():
-    if 'user_id' not in session or session['role'] != 'CLIENT':
+    if 'user_id' not in session:
         return redirect(url_for('login'))
+    
+    init_db()
+    error = None
+    if request.method == 'POST':
+        title = request.form.get('title', '').strip()
+        category = request.form.get('category', '').strip()
+        priority = request.form.get('priority', 'MEDIUM').strip()
+        description = request.form.get('description', '').strip()
+        created_by = session['user_id']
 
-    title = request.form['title']
-    category = request.form['category']
-    priority = request.form['priority']
-    description = request.form['description']
-    created_by = session['user_id']
+        conn = get_db()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO tickets (title, description, category, priority, status, created_by)
+                VALUES (?, ?, ?, ?, 'OPEN', ?)
+            ''', (title, description, category, priority, created_by))
+            conn.commit()
+            return redirect(url_for('dashboard'))
+        except Exception as e:
+            error = f"Ticket creation failed: {str(e)}"
+        finally:
+            conn.close()
 
-    conn = get_db()
-    conn.execute('''
-        INSERT INTO tickets (title, description, category, priority, status, created_by)
-        VALUES (?, ?, ?, ?, 'OPEN', ?)
-    ''', (title, description, category, priority, created_by))
-    conn.commit()
-    conn.close()
+    return render_template('create_ticket.html', error=error)
 
-    return redirect(url_for('dashboard'))
-
-@app.route('/assign_ticket/<int:ticket_id>', methods=['POST'])
-def assign_ticket(ticket_id):
-    if 'user_id' not in session or session['role'] != 'ADMIN':
-        return redirect(url_for('login'))
-
-    employee_id = request.form['employee_id']
-
-    conn = get_db()
-    conn.execute('UPDATE tickets SET assigned_to = ? WHERE ticket_id = ?', (employee_id, ticket_id))
-    conn.commit()
-    conn.close()
-
-    return redirect(url_for('dashboard'))
-
-@app.route('/update_status/<int:ticket_id>', methods=['POST'])
-def update_status(ticket_id):
+@app.route('/update_ticket/<int:ticket_id>', methods=['POST'])
+def update_ticket(ticket_id):
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    status = request.form['status']
+    init_db()
+    status = request.form.get('status')
+    assigned_to = request.form.get('assigned_to')
 
     conn = get_db()
-    conn.execute('UPDATE tickets SET status = ? WHERE ticket_id = ?', (status, ticket_id))
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        if status:
+            cursor.execute("UPDATE tickets SET status = ? WHERE ticket_id = ?", (status, ticket_id))
+        if assigned_to is not None:
+            cursor.execute("UPDATE tickets SET assigned_to = ? WHERE ticket_id = ?", (assigned_to if assigned_to else None, ticket_id))
+        conn.commit()
+    finally:
+        conn.close()
 
     return redirect(url_for('dashboard'))
 
@@ -218,3 +224,5 @@ def logout():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+    
