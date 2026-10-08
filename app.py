@@ -52,7 +52,7 @@ def init_db():
         ('EMP-2002', 'Taruni', 'taruni@helpdesk.com', 'emp123', 'EMPLOYEE'),
         ('EMP-2003', 'Godha', 'godha@helpdesk.com', 'emp123', 'EMPLOYEE'),
         ('EMP-2004', 'Amitha', 'amitha@helpdesk.com', 'emp123', 'EMPLOYEE'),
-        ('CLT-1001', 'Rahul Client', 'client1@gmail.com', 'client123', 'CLIENT'),
+        ('CLT-1001', 'Client One', 'client1@gmail.com', 'client123', 'CLIENT'),
         ('CLT-1002', 'Client Two', 'client2@gmail.com', 'client123', 'CLIENT'),
         ('CLT-1003', 'Client Three', 'client3@gmail.com', 'client123', 'CLIENT')
     ]
@@ -186,7 +186,7 @@ def create_ticket():
     if request.method == 'POST':
         title = request.form.get('title', '').strip()
         category = request.form.get('category', '').strip()
-        priority = request.form.get('priority', 'MEDIUM').strip()
+        priority = request.form.get('priority', 'MEDIUM').strip().upper()
         description = request.form.get('description', '').strip()
         
         conn = get_db()
