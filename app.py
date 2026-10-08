@@ -21,8 +21,12 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
 
+    # Drop old tables to clear out stale cached data and fix blank names
+    cursor.execute("DROP TABLE IF EXISTS tickets")
+    cursor.execute("DROP TABLE IF EXISTS users")
+
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             user_id INTEGER PRIMARY KEY AUTOINCREMENT,
             custom_id TEXT UNIQUE NOT NULL,
             username TEXT NOT NULL,
@@ -33,7 +37,7 @@ def init_db():
     ''')
 
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tickets (
+        CREATE TABLE tickets (
             ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             description TEXT NOT NULL,
@@ -58,19 +62,20 @@ def init_db():
     ]
 
     for user in demo_users:
-        cursor.execute("SELECT user_id FROM users WHERE email = ?", (user[2],))
-        existing = cursor.fetchone()
-        if existing:
-            cursor.execute("UPDATE users SET password = ?, role = ?, username = ? WHERE email = ?", (user[3], user[4], user[1], user[2]))
-        else:
-            cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES (?, ?, ?, ?, ?)", user)
+        cursor.execute("INSERT INTO users (custom_id, username, email, password, role) VALUES (?, ?, ?, ?, ?)", user)
 
     conn.commit()
     conn.close()
 
 @app.before_request
 def before_request_func():
-    init_db()
+    # Initialize database tables automatically if they don't exist yet
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    if not cursor.fetchone():
+        init_db()
+    conn.close()
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
